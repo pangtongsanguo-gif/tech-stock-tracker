@@ -289,13 +289,13 @@ async function doAddStock() {
   // Validate: try fetching a quote to see if symbol exists
   try {
     const proxyUrl = 'https://stock-proxy.pangtongsanguo.workers.dev/?url=' + encodeURIComponent(
-      'https://query1.finance.yahoo.com/v7/finance/quote?symbols=' + sym
+      'https://query1.finance.yahoo.com/v8/finance/chart/' + sym + '?range=1d&interval=1d'
     )
     const { data } = await axios.get(proxyUrl, {
       timeout: 8000,
     })
-    const results = data?.quoteResponse?.result ?? []
-    if (results.length === 0 || !results[0]?.regularMarketPrice) {
+    const meta = data?.chart?.result?.[0]?.meta
+    if (!meta || !meta.regularMarketPrice) {
       addError.value = `找不到 "${sym}" / Symbol not found`
       addLoading.value = false
       return
