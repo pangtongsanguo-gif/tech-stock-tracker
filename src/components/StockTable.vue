@@ -183,31 +183,54 @@
     </v-card-actions>
 
     <!-- ── Add Stock Dialog ── -->
-    <v-dialog v-model="addDialog" max-width="420">
+    <v-dialog v-model="addDialog" max-width="460">
       <v-card>
         <v-card-title>
           <v-icon color="primary" class="mr-2">mdi-plus-circle</v-icon>
           {{ $t('stocks.addStockTitle') }}
         </v-card-title>
         <v-card-text>
-          <v-text-field
-            v-model="newSymbol"
+          <v-autocomplete
+            v-model="selectedSearchResult"
+            :items="searchResults"
+            :loading="searchLoading"
+            :search-input.sync="searchQuery"
             :label="$t('stocks.symbolLabel')"
-            placeholder="e.g. TSLA, META, TSM"
+            :placeholder="$t('stocks.searchPlaceholder')"
             variant="outlined"
             autofocus
-            @keyup.enter="doAddStock"
-            :error-messages="addError"
-            @input="addError = ''"
-          ></v-text-field>
-          <p class="text-caption text-grey mt-1">
-            {{ $t('stocks.symbolHint') }}
+            no-filter
+            hide-no-data
+            return-object
+            item-title="title"
+            item-value="symbol"
+            @update:search="onSearch"
+          >
+            <template #item="{ props, item }">
+              <v-list-item v-bind="props" @click="addFromSearch(item.raw)" :key="item.raw.symbol">
+                <template #prepend>
+                  <v-avatar size="28" color="grey-lighten-2" class="mr-2">
+                    <span class="text-caption font-weight-bold">{{ item.raw.symbol[0] }}</span>
+                  </v-avatar>
+                </template>
+                <template #title>
+                  <span class="font-weight-bold">{{ item.raw.symbol }}</span>
+                  <span class="text-caption text-grey ml-2">{{ item.raw.exchange }}</span>
+                </template>
+                <template #subtitle>
+                  {{ item.raw.name }}
+                </template>
+              </v-list-item>
+            </template>
+          </v-autocomplete>
+          <p v-if="addError" class="text-caption text-error mt-1">{{ addError }}</p>
+          <p v-else class="text-caption text-grey mt-1">
+            {{ $t('stocks.searchHint') }}
           </p>
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn variant="text" @click="addDialog = false">{{ $t('stocks.cancel') }}</v-btn>
-          <v-btn color="primary" @click="doAddStock" :loading="addLoading">{{ $t('stocks.add') }}</v-btn>
+          <v-btn variant="text" @click="closeAddDialog">{{ $t('stocks.cancel') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -271,49 +294,75 @@ const manualUpdate = () => {
   stockStore.fetchAllHistory()
 }
 
-// ── Add stock dialog ──
+// ── Add stock dialog (autocomplete search) ──
 const addDialog = ref(false)
-const newSymbol = ref('')
 const addError = ref('')
-const addLoading = ref(false)
+const searchQuery = ref('')
+const searchLoading = ref(false)
+const searchResults = ref<Array<{ symbol: string; name: string; exchange: string; title: string }>>([])
+const selectedSearchResult = ref(null)
 
-async function doAddStock() {
-  const sym = newSymbol.value.trim().toUpperCase()
-  if (!sym) {
-    addError.value = '請輸入股票代碼 / Please enter a stock symbol'
-    return
-  }
-  addLoading.value = true
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+
+interface YahooSearchQuote {
+  symbol: string
+  shortname?: string
+  longname?: string
+  exchange?: string
+  quoteType?: string
+}
+
+const PROXY_BASE = 'https://stock-proxy.pangtongsanguo.workers.dev/?url='
+const SEARCH_API = 'https://query1.finance.yahoo.com/v1/finance/search'
+
+function closeAddDialog() {
+  addDialog.value = false
+  searchQuery.value = ''
+  searchResults.value = []
+  addError.value = ''
+  selectedSearchResult.value = null
+}
+
+function onSearch(query: string | null) {
+  if (searchTimer) clearTimeout(searchTimer)
   addError.value = ''
 
-  // Validate: try fetching a quote to see if symbol exists
-  try {
-    const proxyUrl = 'https://stock-proxy.pangtongsanguo.workers.dev/?url=' + encodeURIComponent(
-      'https://query1.finance.yahoo.com/v8/finance/chart/' + sym + '?range=1d&interval=1d'
-    )
-    const { data } = await axios.get(proxyUrl, {
-      timeout: 8000,
-    })
-    const meta = data?.chart?.result?.[0]?.meta
-    if (!meta || !meta.regularMarketPrice) {
-      addError.value = `找不到 "${sym}" / Symbol not found`
-      addLoading.value = false
-      return
-    }
-  } catch {
-    addError.value = '驗證失敗，請檢查網絡 / Validation failed, check network'
-    addLoading.value = false
+  if (!query || query.trim().length < 1) {
+    searchResults.value = []
     return
   }
 
-  const ok = stockStore.addStock(sym)
+  searchLoading.value = true
+  searchTimer = setTimeout(async () => {
+    try {
+      const url = SEARCH_API + '?q=' + encodeURIComponent(query.trim()) + '&quotesCount=8'
+      const { data } = await axios.get(PROXY_BASE + encodeURIComponent(url), { timeout: 8000 })
+
+      const quotes: YahooSearchQuote[] = data?.quotes ?? []
+      searchResults.value = quotes
+        .filter(q => q.quoteType === 'EQUITY' && q.symbol && !q.symbol.includes('.'))
+        .map(q => ({
+          symbol: q.symbol,
+          name: q.shortname || q.longname || q.symbol,
+          exchange: q.exchange || '',
+          title: `${q.symbol} — ${q.shortname || q.longname || ''}`,
+        }))
+    } catch {
+      searchResults.value = []
+    } finally {
+      searchLoading.value = false
+    }
+  }, 300)
+}
+
+function addFromSearch(item: { symbol: string; name: string }) {
+  if (!item?.symbol) return
+  const ok = stockStore.addStock(item.symbol)
   if (!ok) {
-    addError.value = `"${sym}" 已存在或無效 / Already added or invalid`
+    addError.value = `"${item.symbol}" 已存在 / Already added`
   } else {
-    addDialog.value = false
-    newSymbol.value = ''
+    closeAddDialog()
   }
-  addLoading.value = false
 }
 
 // ── Remove stock dialog ──
