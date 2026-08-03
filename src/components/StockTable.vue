@@ -288,7 +288,7 @@ async function doAddStock() {
 
   // Validate: try fetching a quote to see if symbol exists
   try {
-    const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(
+    const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(
       'https://query1.finance.yahoo.com/v7/finance/quote?symbols=' + sym
     )
     const { data } = await axios.get(proxyUrl, {

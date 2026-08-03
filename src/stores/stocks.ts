@@ -88,8 +88,8 @@ const YAHOO_CHART_URL = 'https://query1.finance.yahoo.com/v8/finance/chart'
 
 // CORS proxies (tried in order)
 const CORS_PROXIES = [
-  'https://corsproxy.io/?',
   'https://api.allorigins.win/raw?url=',
+  'https://corsproxy.io/?',
 ]
 
 function corsUrl(apiUrl: string, params?: Record<string, string>): string {
