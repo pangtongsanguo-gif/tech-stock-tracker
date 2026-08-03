@@ -86,18 +86,16 @@ function saveStoredStocks(stocks: StoredStock[]) {
 const YAHOO_QUOTE_URL = 'https://query1.finance.yahoo.com/v7/finance/quote'
 const YAHOO_CHART_URL = 'https://query1.finance.yahoo.com/v8/finance/chart'
 
-// CORS proxies (tried in order)
-const CORS_PROXIES = [
-  'https://api.allorigins.win/raw?url=',
-  'https://corsproxy.io/?',
-]
+// ── CORS proxy (Cloudflare Worker — self-hosted, reliable) ──────
+// Deploy with: cd worker && npx wrangler deploy
+// Update this URL after deploying:
+const CORS_PROXY = 'https://stock-proxy.pangtongsanguo.workers.dev/?url='
 
 function corsUrl(apiUrl: string, params?: Record<string, string>): string {
   const fullUrl = params
     ? `${apiUrl}?${new URLSearchParams(params).toString()}`
     : apiUrl
-  // Use primary CORS proxy
-  return CORS_PROXIES[0] + encodeURIComponent(fullUrl)
+  return CORS_PROXY + encodeURIComponent(fullUrl)
 }
 
 function formatMarketCap(cap: number | undefined | null): string {
