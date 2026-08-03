@@ -1,188 +1,313 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import axios from 'axios'
 import type { Stock, StockHistory, NewsItem } from '@/types'
 
-export const useStockStore = defineStore('stocks', () => {
-  // State
-  const stocks = ref<Stock[]>([
-    {
-      symbol: 'NVDA',
-      name: 'NVIDIA',
-      nameZh: '輝達',
-      price: 171.88,
-      change: -2.31,
-      changePercent: -1.33,
-      marketCap: '4.19T',
-      volume: '201.8M',
-      pe: 42.54,
-      high: 176.81,
-      low: 171.03,
-      open: 174.93,
-      previousClose: 174.19
-    },
-    {
-      symbol: 'AAPL',
-      name: 'Apple',
-      nameZh: '蘋果',
-      price: 275.91,
-      change: -0.58,
-      changePercent: -0.21,
-      marketCap: '4.06T',
-      volume: '52.2M',
-      pe: 34.97,
-      high: 279.50,
-      low: 273.23,
-      open: 278.02,
-      previousClose: 276.49
-    },
-    {
-      symbol: 'GOOGL',
-      name: 'Alphabet',
-      nameZh: '谷歌',
-      price: 331.25,
-      change: -1.79,
-      changePercent: -0.54,
-      marketCap: '4.01T',
-      volume: '87.1M',
-      pe: 30.67,
-      high: 332.69,
-      low: 306.46,
-      open: 312.23,
-      previousClose: 333.04
-    },
-    {
-      symbol: 'MSFT',
-      name: 'Microsoft',
-      nameZh: '微軟',
-      price: 393.67,
-      change: -20.52,
-      changePercent: -4.95,
-      marketCap: '2.93T',
-      volume: '65.0M',
-      pe: 24.64,
-      high: 408.30,
-      low: 392.33,
-      open: 407.77,
-      previousClose: 414.19
-    },
-    {
-      symbol: 'AMZN',
-      name: 'Amazon',
-      nameZh: '亞馬遜',
-      price: 222.69,
-      change: -10.30,
-      changePercent: -4.42,
-      marketCap: '2.38T',
-      volume: '95.7M',
-      pe: 31.45,
-      high: 226.30,
-      low: 220.39,
-      open: 224.99,
-      previousClose: 232.99
-    }
-  ])
+// ── Chinese name mapping (extensible) ────────────────────────────
+const chineseNames: Record<string, string> = {
+  NVDA: '輝達',
+  AAPL: '蘋果',
+  GOOGL: '谷歌',
+  MSFT: '微軟',
+  AMZN: '亞馬遜',
+  META: 'Meta',
+  TSLA: '特斯拉',
+  TSM: '台積電',
+  AMD: '超微',
+  INTC: '英特爾',
+  NFLX: 'Netflix',
+  BABA: '阿里巴巴',
+  JD: '京東',
+  BIDU: '百度',
+  PDD: '拼多多',
+  NIO: '蔚來',
+  XPEV: '小鵬',
+  LI: '理想',
+  TCEHY: '騰訊',
+  PYPL: 'PayPal',
+  ADBE: 'Adobe',
+  CRM: 'Salesforce',
+  DIS: '迪士尼',
+  UBER: 'Uber',
+  SHOP: 'Shopify',
+  SQ: 'Block',
+  SNAP: 'Snap',
+  COIN: 'Coinbase',
+  PLTR: 'Palantir',
+  RIVN: 'Rivian',
+  LCID: 'Lucid',
+  RBLX: 'Roblox',
+  SPOT: 'Spotify',
+  SONY: '索尼',
+  TM: '豐田',
+  BA: '波音',
+  JPM: '摩根大通',
+  GS: '高盛',
+  V: 'Visa',
+  MA: 'Mastercard',
+  BTC: '比特幣',
+  ETH: '以太幣',
+}
 
-  const lastUpdate = ref<Date>(new Date())
+// ── localStorage persistence ─────────────────────────────────────
+interface StoredStock {
+  symbol: string
+  order: number
+}
+
+const STORAGE_KEY = 'tech-stock-tracker-stocks'
+
+const DEFAULT_STOCKS: StoredStock[] = [
+  { symbol: 'NVDA', order: 0 },
+  { symbol: 'AAPL', order: 1 },
+  { symbol: 'GOOGL', order: 2 },
+  { symbol: 'MSFT', order: 3 },
+  { symbol: 'AMZN', order: 4 },
+]
+
+function loadStoredStocks(): StoredStock[] {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (stored) {
+      const parsed = JSON.parse(stored)
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed
+      }
+    }
+  } catch { /* ignore parse errors */ }
+  return [...DEFAULT_STOCKS]
+}
+
+function saveStoredStocks(stocks: StoredStock[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(stocks))
+}
+
+// ── Yahoo Finance API helpers ────────────────────────────────────
+const YAHOO_QUOTE_URL = 'https://query1.finance.yahoo.com/v7/finance/quote'
+const YAHOO_CHART_URL = 'https://query1.finance.yahoo.com/v8/finance/chart'
+
+// CORS proxies (tried in order)
+const CORS_PROXIES = [
+  'https://corsproxy.io/?',
+  'https://api.allorigins.win/raw?url=',
+]
+
+function corsUrl(apiUrl: string, params?: Record<string, string>): string {
+  const fullUrl = params
+    ? `${apiUrl}?${new URLSearchParams(params).toString()}`
+    : apiUrl
+  // Use primary CORS proxy
+  return CORS_PROXIES[0] + encodeURIComponent(fullUrl)
+}
+
+function formatMarketCap(cap: number | undefined | null): string {
+  if (cap == null) return '—'
+  if (cap >= 1e12) return (cap / 1e12).toFixed(2) + 'T'
+  if (cap >= 1e9) return (cap / 1e9).toFixed(2) + 'B'
+  if (cap >= 1e6) return (cap / 1e6).toFixed(2) + 'M'
+  return cap.toLocaleString()
+}
+
+function formatVolume(vol: number | undefined | null): string {
+  if (vol == null) return '—'
+  if (vol >= 1e6) return (vol / 1e6).toFixed(1) + 'M'
+  if (vol >= 1e3) return (vol / 1e3).toFixed(1) + 'K'
+  return vol.toLocaleString()
+}
+
+interface YahooQuoteResult {
+  symbol: string
+  shortName?: string
+  longName?: string
+  regularMarketPrice?: number
+  regularMarketChange?: number
+  regularMarketChangePercent?: number
+  marketCap?: number
+  regularMarketVolume?: number
+  regularMarketDayHigh?: number
+  regularMarketDayLow?: number
+  regularMarketOpen?: number
+  regularMarketPreviousClose?: number
+  trailingPE?: number
+}
+
+// ── Store ────────────────────────────────────────────────────────
+export const useStockStore = defineStore('stocks', () => {
+  // ── State ──
+  const stocks = ref<Stock[]>([])
+  const stockHistory = ref<Record<string, StockHistory[]>>({})
+  const lastUpdate = ref<Date | null>(null)
   const autoUpdate = ref<boolean>(true)
   const selectedStocks = ref<string[]>(['NVDA'])
   const compareMode = ref<boolean>(false)
+  const loading = ref<boolean>(false)
+  const error = ref<string | null>(null)
+  const news = ref<NewsItem[]>([])  // Reserved for future real-news integration
 
-  // Generate mock 30-day history
-  const generateHistory = (symbol: string, basePrice: number): StockHistory[] => {
-    const history: StockHistory[] = []
-    const today = new Date()
-    for (let i = 29; i >= 0; i--) {
-      const date = new Date(today)
-      date.setDate(date.getDate() - i)
-      const randomChange = (Math.random() - 0.5) * 10
-      history.push({
-        date: date.toISOString().split('T')[0],
-        price: Number((basePrice + randomChange + (29 - i) * 0.5).toFixed(2))
-      })
-    }
-    return history
+  // Stored config (persisted)
+  const storedStocks = ref<StoredStock[]>(loadStoredStocks())
+
+  // ── Persist helper ──
+  function persist() {
+    saveStoredStocks(storedStocks.value)
   }
 
-  const stockHistory = ref<Record<string, StockHistory[]>>({
-    NVDA: generateHistory('NVDA', 165),
-    AAPL: generateHistory('AAPL', 270),
-    GOOGL: generateHistory('GOOGL', 325),
-    MSFT: generateHistory('MSFT', 400),
-    AMZN: generateHistory('AMZN', 230)
-  })
-
-  const news = ref<NewsItem[]>([
-    {
-      id: '1',
-      title: 'NVIDIA Leads AI Chip Market Despite Recent Dip',
-      titleZh: 'NVIDIA 雖近期下跌但仍領導 AI 晶片市場',
-      summary: 'NVIDIA remains the dominant player in AI chip market with strong demand for H100 and upcoming H200 chips.',
-      summaryZh: 'NVIDIA 憑藉 H100 和即將推出的 H200 晶片強勁需求，仍保持 AI 晶片市場主導地位。',
-      source: 'TechCrunch',
-      url: 'https://techcrunch.com',
-      publishedAt: '2026-02-06T10:00:00Z',
-      relatedStocks: ['NVDA']
-    },
-    {
-      id: '2',
-      title: 'Apple Achieves Record iPhone Market Share in US',
-      titleZh: '蘋果在美國 iPhone 市場份額創歷史新高',
-      summary: 'Apple captured 69% market share in the US smartphone market, marking its strongest quarter ever.',
-      summaryZh: '蘋果在美國智能手機市場佔有率達到 69%，創下歷史最佳季度。',
-      source: 'Bloomberg',
-      url: 'https://bloomberg.com',
-      publishedAt: '2026-02-05T14:30:00Z',
-      relatedStocks: ['AAPL']
-    },
-    {
-      id: '3',
-      title: 'Microsoft Downgraded Due to AI Spending Concerns',
-      titleZh: '微軟因 AI 支出擔憂被降級',
-      summary: 'Stifel downgrades Microsoft citing concerns over massive AI capital expenditures impacting profitability.',
-      summaryZh: 'Stifel 因擔憂大規模 AI 資本支出影響盈利能力而下調微軟評級。',
-      source: 'Reuters',
-      url: 'https://reuters.com',
-      publishedAt: '2026-02-05T16:00:00Z',
-      relatedStocks: ['MSFT']
-    },
-    {
-      id: '4',
-      title: 'Amazon Plans $200 Billion AI Investment',
-      titleZh: '亞馬遜計劃投資 2000 億美元於 AI',
-      summary: 'Amazon announces massive $200 billion capital expenditure plan focused on AI infrastructure.',
-      summaryZh: '亞馬遜宣布將投資 2000 億美元於 AI 基礎設施。',
-      source: 'CNBC',
-      url: 'https://cnbc.com',
-      publishedAt: '2026-02-05T12:00:00Z',
-      relatedStocks: ['AMZN']
-    },
-    {
-      id: '5',
-      title: 'Alphabet Announces $180 Billion AI Investment Plan',
-      titleZh: 'Alphabet 宣布 1800 億美元 AI 投資計劃',
-      summary: 'Google\'s parent company plans to invest $180 billion in 2026 primarily for AI development.',
-      summaryZh: 'Google 母公司計劃在 2026 年投資 1800 億美元主要用於 AI 開發。',
-      source: 'Wall Street Journal',
-      url: 'https://wsj.com',
-      publishedAt: '2026-02-05T09:00:00Z',
-      relatedStocks: ['GOOGL']
-    },
-    {
-      id: '6',
-      title: 'Tech Stocks Face Pressure Amid AI Investment Concerns',
-      titleZh: '科技股因 AI 投資擔憂面臨壓力',
-      summary: 'Major tech stocks declined as investors worry about the return on massive AI investments.',
-      summaryZh: '主要科技股下跌，投資者擔心巨額 AI 投資的回報。',
-      source: 'Financial Times',
-      url: 'https://ft.com',
-      publishedAt: '2026-02-06T08:00:00Z',
-      relatedStocks: ['NVDA', 'MSFT', 'AMZN', 'GOOGL']
+  // ── Fetch real quotes from Yahoo Finance ──
+  async function fetchQuotes(): Promise<void> {
+    if (storedStocks.value.length === 0) {
+      stocks.value = []
+      return
     }
-  ])
 
-  // Getters
+    loading.value = true
+    error.value = null
+
+    const symbols = storedStocks.value.map(s => s.symbol).join(',')
+
+    try {
+      const { data } = await axios.get(corsUrl(YAHOO_QUOTE_URL, { symbols, formatted: 'true' }), {
+        timeout: 15000,
+      })
+
+      const results: YahooQuoteResult[] = data?.quoteResponse?.result ?? []
+
+      // Build a new stock list respecting stored order
+      const stockMap = new Map<string, YahooQuoteResult>()
+      for (const r of results) {
+        stockMap.set(r.symbol, r)
+      }
+
+      const newStocks: Stock[] = []
+      for (const stored of storedStocks.value) {
+        const q = stockMap.get(stored.symbol)
+        if (!q) continue // symbol not found in API response, skip
+
+        const name = q.shortName || q.longName || stored.symbol
+        newStocks.push({
+          symbol: q.symbol,
+          name,
+          nameZh: chineseNames[q.symbol] || name,
+          price: q.regularMarketPrice ?? 0,
+          change: q.regularMarketChange ?? 0,
+          changePercent: q.regularMarketChangePercent ?? 0,
+          marketCap: formatMarketCap(q.marketCap),
+          volume: formatVolume(q.regularMarketVolume),
+          pe: q.trailingPE ?? 0,
+          high: q.regularMarketDayHigh ?? 0,
+          low: q.regularMarketDayLow ?? 0,
+          open: q.regularMarketOpen ?? 0,
+          previousClose: q.regularMarketPreviousClose ?? 0,
+        })
+      }
+
+      stocks.value = newStocks
+      lastUpdate.value = new Date()
+    } catch (e: any) {
+      error.value = e?.message || 'Failed to fetch stock data'
+      console.error('Yahoo Finance API error:', e)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  // ── Fetch historical chart data ──
+  async function fetchHistory(symbol: string, range = '1mo'): Promise<void> {
+    try {
+      const { data } = await axios.get(corsUrl(`${YAHOO_CHART_URL}/${encodeURIComponent(symbol)}`, {
+        range, interval: '1d',
+      }), {
+        timeout: 15000,
+      })
+
+      const result = data?.chart?.result?.[0]
+      if (!result) return
+
+      const timestamps: number[] = result.timestamp ?? []
+      const quotes = result.indicators?.quote?.[0]
+      const closes: number[] = quotes?.close ?? []
+
+      const history: StockHistory[] = []
+      for (let i = 0; i < timestamps.length; i++) {
+        if (closes[i] != null) {
+          const date = new Date(timestamps[i] * 1000)
+          history.push({
+            date: date.toISOString().split('T')[0],
+            price: closes[i],
+          })
+        }
+      }
+
+      stockHistory.value[symbol] = history
+    } catch (e) {
+      console.error(`Failed to fetch history for ${symbol}:`, e)
+    }
+  }
+
+  // ── Fetch history for all selected stocks ──
+  async function fetchAllHistory(): Promise<void> {
+    const symbols = storedStocks.value.map(s => s.symbol)
+    await Promise.allSettled(symbols.map(s => fetchHistory(s)))
+  }
+
+  // ── Stock list management ──
+  function addStock(symbol: string): boolean {
+    const upper = symbol.toUpperCase().trim()
+    if (!upper || upper.length > 10) return false
+    if (storedStocks.value.some(s => s.symbol === upper)) return false // duplicate
+
+    const maxOrder = storedStocks.value.reduce((max, s) => Math.max(max, s.order), -1)
+    storedStocks.value.push({ symbol: upper, order: maxOrder + 1 })
+    persist()
+    fetchQuotes()
+    fetchHistory(upper)
+    return true
+  }
+
+  function removeStock(symbol: string): void {
+    storedStocks.value = storedStocks.value.filter(s => s.symbol !== symbol)
+    // Re-index orders
+    storedStocks.value.forEach((s, i) => { s.order = i })
+    persist()
+
+    // Remove from selected if needed
+    selectedStocks.value = selectedStocks.value.filter(s => s !== symbol)
+    if (selectedStocks.value.length === 0 && storedStocks.value.length > 0) {
+      selectedStocks.value = [storedStocks.value[0].symbol]
+    }
+
+    fetchQuotes()
+  }
+
+  function moveStock(symbol: string, direction: 'up' | 'down'): void {
+    const idx = storedStocks.value.findIndex(s => s.symbol === symbol)
+    if (idx === -1) return
+
+    const newIdx = direction === 'up' ? idx - 1 : idx + 1
+    if (newIdx < 0 || newIdx >= storedStocks.value.length) return
+
+    // Swap
+    const temp = storedStocks.value[idx]
+    storedStocks.value[idx] = storedStocks.value[newIdx]
+    storedStocks.value[newIdx] = temp
+
+    // Re-index orders
+    storedStocks.value.forEach((s, i) => { s.order = i })
+    persist()
+
+    // Re-sort stocks display array
+    const stockMap = new Map(stocks.value.map(s => [s.symbol, s]))
+    stocks.value = storedStocks.value
+      .map(ss => stockMap.get(ss.symbol))
+      .filter((s): s is Stock => s != null)
+  }
+
+  // ── Getters ──
   const sortedStocks = computed(() => {
-    return [...stocks.value].sort((a, b) => b.marketCap.localeCompare(a.marketCap))
+    // Already in order from storedStocks
+    const stockMap = new Map(stocks.value.map(s => [s.symbol, s]))
+    return storedStocks.value
+      .map(ss => stockMap.get(ss.symbol))
+      .filter((s): s is Stock => s != null)
   })
 
   const getStockBySymbol = (symbol: string) => {
@@ -193,22 +318,8 @@ export const useStockStore = defineStore('stocks', () => {
     return stockHistory.value[symbol] || []
   }
 
-  // Actions
-  const updateStockPrices = () => {
-    stocks.value.forEach(stock => {
-      const randomChange = (Math.random() - 0.5) * 2
-      stock.price = Number((stock.price + randomChange).toFixed(2))
-      stock.change = Number((stock.price - stock.previousClose).toFixed(2))
-      stock.changePercent = Number(((stock.change / stock.previousClose) * 100).toFixed(2))
-    })
-    lastUpdate.value = new Date()
-  }
-
-  const toggleAutoUpdate = () => {
-    autoUpdate.value = !autoUpdate.value
-  }
-
-  const selectStock = (symbol: string) => {
+  // ── Selection / compare ──
+  function selectStock(symbol: string) {
     if (compareMode.value) {
       if (selectedStocks.value.includes(symbol)) {
         selectedStocks.value = selectedStocks.value.filter(s => s !== symbol)
@@ -220,27 +331,55 @@ export const useStockStore = defineStore('stocks', () => {
     }
   }
 
-  const toggleCompareMode = () => {
+  function toggleCompareMode() {
     compareMode.value = !compareMode.value
     if (!compareMode.value) {
-      selectedStocks.value = [selectedStocks.value[0] || 'NVDA']
+      selectedStocks.value = [selectedStocks.value[0] || storedStocks.value[0]?.symbol || '']
     }
   }
 
+  // ── Auto-refresh simulation (only random jitter; real data comes from API poll) ──
+  function updateStockPrices() {
+    fetchQuotes()
+  }
+
+  function toggleAutoUpdate() {
+    autoUpdate.value = !autoUpdate.value
+  }
+
+  // ── Init ──
+  async function init() {
+    await fetchQuotes()
+    await fetchAllHistory()
+  }
+
   return {
+    // state
     stocks,
     sortedStocks,
+    stockHistory,
     lastUpdate,
     autoUpdate,
     selectedStocks,
     compareMode,
-    stockHistory,
+    loading,
+    error,
     news,
-    getStockBySymbol,
-    getHistoryBySymbol,
+    storedStocks,
+    // actions
+    init,
+    fetchQuotes,
+    fetchHistory,
+    fetchAllHistory,
+    addStock,
+    removeStock,
+    moveStock,
     updateStockPrices,
     toggleAutoUpdate,
     selectStock,
-    toggleCompareMode
+    toggleCompareMode,
+    // getters
+    getStockBySymbol,
+    getHistoryBySymbol,
   }
 })

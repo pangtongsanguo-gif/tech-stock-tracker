@@ -18,7 +18,7 @@
       <!-- Stock Selector -->
       <div class="d-flex flex-wrap gap-2 mb-4">
         <v-chip
-          v-for="stock in stockStore.stocks"
+          v-for="stock in stockStore.sortedStocks"
           :key="stock.symbol"
           :color="isSelected(stock.symbol) ? 'primary' : undefined"
           :variant="isSelected(stock.symbol) ? 'flat' : 'outlined'"
@@ -27,33 +27,46 @@
         >
           <v-icon start size="16">mdi-chart-line</v-icon>
           {{ stock.symbol }}
-          <span class="ml-1" :class="stock.change >= 0 ? 'text-green' : 'text-red'">
-            {{ stock.changePercent > 0 ? '+' : '' }}{{ stock.changePercent }}%
+          <span
+            v-if="stock.price > 0"
+            class="ml-1"
+            :class="stock.changePercent >= 0 ? 'text-green' : 'text-red'"
+          >
+            {{ stock.changePercent >= 0 ? '+' : '' }}{{ stock.changePercent.toFixed(2) }}%
           </span>
         </v-chip>
       </div>
 
       <!-- Chart -->
       <div class="chart-container">
+        <!-- Loading -->
+        <div v-if="chartLoading" class="d-flex align-center justify-center fill-height">
+          <v-progress-circular indeterminate color="primary" size="48"></v-progress-circular>
+        </div>
+
         <Line
-          v-if="chartData"
+          v-else-if="chartData"
           :data="chartData"
           :options="chartOptions"
         />
+
+        <div v-else class="d-flex align-center justify-center fill-height text-grey">
+          {{ $t('chart.noData') }}
+        </div>
       </div>
 
       <!-- Legend -->
-      <div class="d-flex flex-wrap justify-center gap-4 mt-4">
+      <div v-if="chartData" class="d-flex flex-wrap justify-center gap-4 mt-4">
         <div
           v-for="(stock, index) in selectedStocksData"
-          :key="stock.symbol"
+          :key="stock?.symbol ?? index"
           class="d-flex align-center"
         >
           <div
             class="legend-dot mr-2"
-            :style="{ backgroundColor: colors[index] }"
+            :style="{ backgroundColor: colors[index % colors.length] }"
           ></div>
-          <span class="text-body-2">{{ stock.name }} (${{ stock.price }})</span>
+          <span class="text-body-2">{{ stock?.name ?? '?' }} (${{ stock?.price?.toFixed(2) ?? '—' }})</span>
         </div>
       </div>
     </v-card-text>
@@ -75,6 +88,7 @@ import {
   Filler
 } from 'chart.js'
 import { useStockStore } from '@/stores/stocks'
+import { ref, watch } from 'vue'
 
 ChartJS.register(
   CategoryScale,
@@ -88,6 +102,7 @@ ChartJS.register(
 )
 
 const stockStore = useStockStore()
+const chartLoading = ref(false)
 
 const colors = ['#667eea', '#f093fb', '#4facfe', '#43e97b', '#fa709a']
 
@@ -109,10 +124,27 @@ const toggleCompare = () => {
   stockStore.toggleCompareMode()
 }
 
+// Watch for stock selection changes and ensure history is loaded
+watch(
+  () => [...stockStore.selectedStocks],
+  async (symbols) => {
+    for (const sym of symbols) {
+      if (!stockStore.stockHistory[sym] || stockStore.stockHistory[sym].length === 0) {
+        chartLoading.value = true
+        await stockStore.fetchHistory(sym)
+        chartLoading.value = false
+      }
+    }
+  },
+  { immediate: false }
+)
+
 const chartData = computed(() => {
   if (stockStore.selectedStocks.length === 0) return null
 
   const firstHistory = stockStore.getHistoryBySymbol(stockStore.selectedStocks[0])
+  if (firstHistory.length === 0) return null
+
   const labels = firstHistory.map(h => {
     const date = new Date(h.date)
     return `${date.getMonth() + 1}/${date.getDate()}`

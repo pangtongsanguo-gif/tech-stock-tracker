@@ -6,7 +6,13 @@
     </v-card-title>
     <v-card-subtitle>{{ $t('news.subtitle') }}</v-card-subtitle>
     <v-card-text>
-      <v-row>
+      <!-- Empty state -->
+      <div v-if="stockStore.news.length === 0" class="text-center py-8">
+        <v-icon size="48" color="grey-lighten-1" class="mb-2">mdi-newspaper-variant-outline</v-icon>
+        <p class="text-body-1 text-grey">{{ $t('news.empty') }}</p>
+      </div>
+
+      <v-row v-else>
         <v-col
           v-for="item in stockStore.news"
           :key="item.id"
@@ -61,7 +67,6 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useStockStore } from '@/stores/stocks'
 

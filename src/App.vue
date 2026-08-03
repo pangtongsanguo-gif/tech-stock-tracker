@@ -41,7 +41,7 @@
               {{ $t('nav.title') }}
             </h1>
             <p :class="theme.global.name.value === 'light' ? 'text-subtitle-1 text-grey-darken-1' : 'text-subtitle-1 text-grey-lighten-1'">
-              Top 5 Tech Giants | 五大科技巨頭
+              Top 5 Tech Giants | 五大科技巨頭 → 自訂股票追蹤
             </p>
           </v-col>
         </v-row>
@@ -77,7 +77,7 @@
             Tech Stock Tracker | 科技股追蹤
           </p>
           <p class="text-caption text-grey-lighten-1">
-            Data is simulated for demo purposes | 數據僅供演示用途
+            Data from Yahoo Finance | 數據來源 Yahoo Finance
           </p>
         </div>
       </v-container>
