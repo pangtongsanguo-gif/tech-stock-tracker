@@ -7,7 +7,7 @@
         <span class="font-weight-bold">{{ $t('nav.title') }}</span>
       </v-app-bar-title>
       <v-spacer></v-spacer>
-      
+
       <!-- Theme Toggle -->
       <v-btn
         variant="text"
@@ -33,36 +33,33 @@
 
     <!-- Main Content -->
     <v-main :class="theme.global.name.value === 'light' ? 'bg-grey-lighten-4' : 'bg-grey-darken-4'">
-      <v-container class="py-6">
+      <v-container class="py-6 px-2 px-md-6 px-lg-12">
         <!-- Page Title -->
         <v-row justify="center" class="mb-6">
-          <v-col cols="12" md="10" lg="8" class="text-center">
+          <v-col cols="12" class="text-center">
             <h1 class="text-h3 font-weight-bold text-primary mb-2">
               {{ $t('nav.title') }}
             </h1>
-            <p :class="theme.global.name.value === 'light' ? 'text-subtitle-1 text-grey-darken-1' : 'text-subtitle-1 text-grey-lighten-1'">
-              Top 5 Tech Giants | 五大科技巨頭 → 自訂股票追蹤
-            </p>
           </v-col>
         </v-row>
 
         <!-- Stock Table -->
         <v-row justify="center">
-          <v-col cols="12" md="10" lg="8">
+          <v-col cols="12">
             <StockTable />
           </v-col>
         </v-row>
 
         <!-- Stock Chart -->
         <v-row justify="center">
-          <v-col cols="12" md="10" lg="8">
+          <v-col cols="12">
             <StockChart />
           </v-col>
         </v-row>
 
         <!-- News Section -->
         <v-row justify="center">
-          <v-col cols="12" md="10" lg="8">
+          <v-col cols="12">
             <NewsSection />
           </v-col>
         </v-row>

@@ -67,9 +67,9 @@
             <th class="text-left">{{ $t('stocks.company') }}</th>
             <th class="text-right">{{ $t('stocks.price') }}</th>
             <th class="text-right">{{ $t('stocks.change') }}</th>
-            <th class="text-right">{{ $t('stocks.marketCap') }}</th>
             <th class="text-right hidden-sm-and-down">{{ $t('stocks.volume') }}</th>
             <th class="text-right hidden-md-and-down">{{ $t('stocks.pe') }}</th>
+            <th class="text-center hidden-sm-and-down" style="width: 110px">{{ $t('stocks.risk') }}</th>
             <th class="text-center" style="width: 40px"></th>
           </tr>
         </thead>
@@ -147,9 +147,6 @@
               <span v-else class="text-grey">—</span>
             </td>
 
-            <!-- Market Cap -->
-            <td class="text-right">{{ stock.marketCap }}</td>
-
             <!-- Volume -->
             <td class="text-right hidden-sm-and-down">{{ stock.volume }}</td>
 
@@ -158,16 +155,56 @@
               {{ stock.pe > 0 ? stock.pe.toFixed(2) : '—' }}
             </td>
 
+            <!-- Risk gauge -->
+            <td class="text-center pa-2 hidden-sm-and-down" @click.stop>
+              <div v-if="stock.fiftyTwoWeekHigh > 0" class="risk-gauge">
+                <div class="d-flex justify-space-between text-caption mb-1">
+                  <span class="text-grey">${{ fmtPrice(stock.fiftyTwoWeekLow) }}</span>
+                  <span
+                    :class="riskColor(stock)"
+                    class="font-weight-bold"
+                  >
+                    {{ riskLabel(stock, locale) }}
+                  </span>
+                  <span class="text-grey">${{ fmtPrice(stock.fiftyTwoWeekHigh) }}</span>
+                </div>
+                <div class="risk-bar">
+                  <div
+                    class="risk-fill"
+                    :style="{
+                      width: riskPercent(stock) + '%',
+                      backgroundColor: riskBarColor(stock),
+                    }"
+                  ></div>
+                </div>
+                <!-- Momentum indicator -->
+                <div class="text-caption mt-1">
+                  <span
+                    :class="momentumColor(stock.symbol)"
+                    class="font-weight-medium"
+                  >
+                    {{ momentumIcon(stock.symbol) }}
+                    {{ momentumLabel(stock.symbol, locale) }}
+                  </span>
+                </div>
+              </div>
+              <span v-else class="text-caption text-grey">—</span>
+            </td>
+
             <!-- Remove button -->
             <td class="text-center pa-1" @click.stop>
-              <v-btn
-                icon="mdi-close"
-                variant="text"
-                size="x-small"
-                density="compact"
-                color="grey"
-                @click="confirmRemove(stock.symbol)"
-              ></v-btn>
+              <v-tooltip :text="$t('stocks.remove')" location="top">
+                <template #activator="{ props }">
+                  <v-btn
+                    v-bind="props"
+                    icon="mdi-close-circle"
+                    variant="text"
+                    size="small"
+                    color="error"
+                    @click="confirmRemove(stock.symbol)"
+                  ></v-btn>
+                </template>
+              </v-tooltip>
             </td>
           </tr>
         </tbody>
@@ -254,10 +291,13 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useStockStore } from '@/stores/stocks'
 import axios from 'axios'
+import type { Stock } from '@/types'
 
 const stockStore = useStockStore()
+const { locale } = useI18n()
 
 let updateInterval: number | null = null
 
@@ -278,6 +318,79 @@ const getStockColor = (symbol: string) => {
   return colors[symbol] || 'primary'
 }
 
+// ── Risk assessment helpers ──
+function fmtPrice(p: number): string {
+  if (p >= 100) return p.toFixed(0)
+  return p.toFixed(1)
+}
+
+function riskPercent(stock: Stock): number {
+  const range = stock.fiftyTwoWeekHigh - stock.fiftyTwoWeekLow
+  if (range <= 0) return 50
+  const pct = ((stock.price - stock.fiftyTwoWeekLow) / range) * 100
+  return Math.min(100, Math.max(0, pct))
+}
+
+function riskBarColor(stock: Stock): string {
+  const pct = riskPercent(stock)
+  if (pct > 80) return '#f44336'      // red: near 52w high
+  if (pct > 60) return '#ff9800'      // orange
+  if (pct > 40) return '#ffc107'      // yellow
+  if (pct > 20) return '#8bc34a'      // light green
+  return '#4caf50'                     // green: near 52w low
+}
+
+function riskColor(stock: Stock): string {
+  const pct = riskPercent(stock)
+  if (pct > 80) return 'text-error'
+  if (pct > 60) return 'text-orange-darken-2'
+  if (pct < 20) return 'text-success'
+  return 'text-grey'
+}
+
+function riskLabel(stock: Stock, locale: string): string {
+  const pct = riskPercent(stock)
+  if (pct > 80) return locale === 'zh' ? '偏高' : 'High'
+  if (pct > 60) return locale === 'zh' ? '中高' : 'Med-High'
+  if (pct > 40) return locale === 'zh' ? '中等' : 'Mid'
+  if (pct > 20) return locale === 'zh' ? '中低' : 'Med-Low'
+  return locale === 'zh' ? '偏低' : 'Low'
+}
+
+// ── Momentum (5-day trend) ──
+function getMomentumPct(symbol: string): number {
+  const history = stockStore.getHistoryBySymbol(symbol)
+  if (history.length < 3) return 0
+  const recent = history.slice(-5)
+  const first = recent[0].price
+  const last = recent[recent.length - 1].price
+  if (first === 0) return 0
+  return +(((last - first) / first) * 100).toFixed(1)
+}
+
+function momentumIcon(symbol: string): string {
+  const pct = getMomentumPct(symbol)
+  if (pct > 1) return '▲'
+  if (pct < -1) return '▼'
+  return '◆'
+}
+
+function momentumColor(symbol: string): string {
+  const pct = getMomentumPct(symbol)
+  if (pct > 1) return 'text-success'
+  if (pct < -1) return 'text-error'
+  return 'text-grey'
+}
+
+function momentumLabel(symbol: string, locale: string): string {
+  const pct = getMomentumPct(symbol)
+  const sign = pct >= 0 ? '+' : ''
+  const dir = pct > 1 ? (locale === 'zh' ? '上升' : 'Up')
+    : pct < -1 ? (locale === 'zh' ? '下跌' : 'Down')
+    : locale === 'zh' ? '平穩' : 'Flat'
+  return `${dir} ${sign}${pct}%`
+}
+
 // ── Select stock ──
 const selectStock = (symbol: string) => {
   stockStore.selectStock(symbol)
@@ -292,6 +405,7 @@ const moveStock = (symbol: string, direction: 'up' | 'down') => {
 const manualUpdate = () => {
   stockStore.fetchQuotes()
   stockStore.fetchAllHistory()
+  stockStore.fetchNews()
 }
 
 // ── Add stock dialog (autocomplete search) ──
@@ -418,5 +532,23 @@ onUnmounted(() => {
 
 tr:hover {
   background-color: rgba(0, 0, 0, 0.03);
+}
+
+/* Risk gauge */
+.risk-gauge {
+  min-width: 90px;
+}
+
+.risk-bar {
+  height: 5px;
+  background: rgba(128, 128, 128, 0.2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.risk-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease, background-color 0.5s ease;
 }
 </style>

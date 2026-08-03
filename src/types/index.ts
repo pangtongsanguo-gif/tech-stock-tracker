@@ -12,6 +12,9 @@ export interface Stock {
   low: number
   open: number
   previousClose: number
+  // 52-week range for risk assessment
+  fiftyTwoWeekHigh: number
+  fiftyTwoWeekLow: number
 }
 
 export interface StockHistory {

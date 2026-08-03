@@ -38,6 +38,7 @@ function saveStoredStocks(s: StoredStock[]) { localStorage.setItem(STORAGE_KEY, 
 // ── Cloudflare Worker proxy ──────────────────────────────────────
 const PROXY = 'https://stock-proxy.pangtongsanguo.workers.dev/?url='
 const YAHOO_CHART = 'https://query1.finance.yahoo.com/v8/finance/chart'
+const YAHOO_RSS = 'https://feeds.finance.yahoo.com/rss/2.0/headline'
 
 function proxyUrl(url: string): string { return PROXY + encodeURIComponent(url) }
 
@@ -66,6 +67,16 @@ export const useStockStore = defineStore('stocks', () => {
   const error = ref<string | null>(null)
   const news = ref<NewsItem[]>([])
   const storedStocks = ref<StoredStock[]>(loadStoredStocks())
+  const chartRange = ref('1mo')  // 5d | 1mo | 3mo | 6mo | 1y
+
+  // Time range options
+  const chartRanges = [
+    { value: '5d', label: '5D', labelZh: '5天' },
+    { value: '1mo', label: '1M', labelZh: '1月' },
+    { value: '3mo', label: '3M', labelZh: '3月' },
+    { value: '6mo', label: '6M', labelZh: '6月' },
+    { value: '1y', label: '1Y', labelZh: '1年' },
+  ]
 
   function persist() { saveStoredStocks(storedStocks.value) }
 
@@ -117,9 +128,11 @@ export const useStockStore = defineStore('stocks', () => {
         price, change, changePercent,
         marketCap: fmtCap(mktCap),
         volume: fmtVol(dayVolume),
-        pe: 0,  // Not available from chart API
+        pe: 0,
         high: dayHigh, low: dayLow,
         open: dayOpen, previousClose: prevClose,
+        fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh ?? 0,
+        fiftyTwoWeekLow: meta.fiftyTwoWeekLow ?? 0,
       }
     } catch (e: any) {
       console.error(`Fetch error for ${symbol}:`, e?.message)
@@ -149,8 +162,37 @@ export const useStockStore = defineStore('stocks', () => {
     await fetchStockData(symbol)
   }
 
+  async function fetchChartHistory(symbol: string, range: string): Promise<void> {
+    const url = `${YAHOO_CHART}/${encodeURIComponent(symbol)}?range=${range}&interval=1d&includePrePost=false`
+    try {
+      const { data } = await axios.get(proxyUrl(url), { timeout: 15000 })
+      const r = data?.chart?.result?.[0]
+      if (!r) return
+      const timestamps: number[] = r.timestamp ?? []
+      const closes: number[] = r.indicators?.quote?.[0]?.close ?? []
+      const history: StockHistory[] = []
+      for (let i = 0; i < timestamps.length; i++) {
+        if (closes[i] != null) {
+          history.push({
+            date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
+            price: closes[i],
+          })
+        }
+      }
+      stockHistory.value[symbol] = history
+    } catch (e: any) {
+      console.error(`History fetch error for ${symbol}:`, e?.message)
+    }
+  }
+
+  async function setChartRange(range: string): Promise<void> {
+    chartRange.value = range
+    const symbols = [...selectedStocks.value]
+    await Promise.allSettled(symbols.map(s => fetchChartHistory(s, range)))
+  }
+
   async function fetchAllHistory(): Promise<void> {
-    await fetchQuotes() // fetchQuotes already populates history
+    await setChartRange(chartRange.value)
   }
 
   // ── Stock management ───────────────────────────────────────────
@@ -208,19 +250,64 @@ export const useStockStore = defineStore('stocks', () => {
 
   function toggleCompareMode() {
     compareMode.value = !compareMode.value
-    if (!compareMode.value)
+    if (compareMode.value) {
+      // Auto-select all stocks when compare mode is turned ON
+      selectedStocks.value = storedStocks.value.map(s => s.symbol)
+    } else {
       selectedStocks.value = [selectedStocks.value[0] || storedStocks.value[0]?.symbol || '']
+    }
   }
 
   function updateStockPrices() { fetchQuotes() }
   function toggleAutoUpdate() { autoUpdate.value = !autoUpdate.value }
 
-  async function init() { await fetchQuotes() }
+  async function fetchNews(): Promise<void> {
+    try {
+      const symbols = storedStocks.value.map(s => s.symbol).slice(0, 10).join(',')
+      const rssUrl = `${YAHOO_RSS}?s=${encodeURIComponent(symbols)}&region=US&lang=en-US`
+      const { data } = await axios.get(proxyUrl(rssUrl), { timeout: 10000 })
+
+      const parser = new DOMParser()
+      const xml = parser.parseFromString(data, 'text/xml')
+      const items = xml.querySelectorAll('item')
+
+      const newsItems: NewsItem[] = []
+      let id = 0
+      items.forEach(el => {
+        const title = el.querySelector('title')?.textContent || ''
+        const summary = el.querySelector('description')?.textContent || ''
+        const link = el.querySelector('link')?.textContent || ''
+        const pubDate = el.querySelector('pubDate')?.textContent || ''
+        if (title && link) {
+          newsItems.push({
+            id: String(++id),
+            title,
+            titleZh: title,  // no auto-translation; user can read English
+            summary,
+            summaryZh: summary,
+            source: 'Yahoo Finance',
+            url: link,
+            publishedAt: pubDate,
+            relatedStocks: [],
+          })
+        }
+      })
+      news.value = newsItems.slice(0, 12) // max 12 items
+    } catch (e: any) {
+      console.error('News fetch error:', e?.message)
+    }
+  }
+
+  async function init() {
+    await fetchQuotes()
+    fetchNews()
+  }
 
   return {
     stocks, sortedStocks, stockHistory, lastUpdate, autoUpdate,
     selectedStocks, compareMode, loading, error, news, storedStocks,
-    init, fetchQuotes, fetchHistory, fetchAllHistory,
+    chartRange, chartRanges,
+    init, fetchQuotes, fetchHistory, fetchAllHistory, setChartRange, fetchNews,
     addStock, removeStock, moveStock, updateStockPrices,
     toggleAutoUpdate, selectStock, toggleCompareMode,
     getStockBySymbol, getHistoryBySymbol,

@@ -13,7 +13,29 @@
         {{ $t('chart.compareMode') }}
       </v-btn>
     </v-card-title>
-    <v-card-subtitle>{{ $t('chart.subtitle') }}</v-card-subtitle>
+    <v-card-subtitle class="d-flex align-center">
+      {{ $t('chart.subtitle') }}
+      <v-spacer></v-spacer>
+      <!-- Time Range Selector -->
+      <v-btn-toggle
+        v-model="activeRange"
+        mandatory
+        density="compact"
+        variant="outlined"
+        divided
+        @update:model-value="onRangeChange"
+      >
+        <v-btn
+          v-for="r in stockStore.chartRanges"
+          :key="r.value"
+          :value="r.value"
+          size="x-small"
+          class="text-none px-2"
+        >
+          {{ locale === 'zh' ? r.labelZh : r.label }}
+        </v-btn>
+      </v-btn-toggle>
+    </v-card-subtitle>
     <v-card-text>
       <!-- Stock Selector -->
       <div class="d-flex flex-wrap gap-2 mb-4">
@@ -74,7 +96,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Line } from 'vue-chartjs'
 import {
   Chart as ChartJS,
@@ -88,7 +111,6 @@ import {
   Filler
 } from 'chart.js'
 import { useStockStore } from '@/stores/stocks'
-import { ref, watch } from 'vue'
 
 ChartJS.register(
   CategoryScale,
@@ -102,7 +124,9 @@ ChartJS.register(
 )
 
 const stockStore = useStockStore()
+const { locale } = useI18n()
 const chartLoading = ref(false)
+const activeRange = ref(stockStore.chartRange)
 
 const colors = ['#667eea', '#f093fb', '#4facfe', '#43e97b', '#fa709a']
 
@@ -124,17 +148,27 @@ const toggleCompare = () => {
   stockStore.toggleCompareMode()
 }
 
+function onRangeChange(range: string) {
+  if (range === stockStore.chartRange) return
+  chartLoading.value = true
+  stockStore.setChartRange(range).then(() => {
+    chartLoading.value = false
+  })
+}
+
 // Watch for stock selection changes and ensure history is loaded
 watch(
   () => [...stockStore.selectedStocks],
   async (symbols) => {
-    for (const sym of symbols) {
-      if (!stockStore.stockHistory[sym] || stockStore.stockHistory[sym].length === 0) {
-        chartLoading.value = true
-        await stockStore.fetchHistory(sym)
-        chartLoading.value = false
-      }
-    }
+    const missing = symbols.filter(
+      s => !stockStore.stockHistory[s] || stockStore.stockHistory[s].length === 0
+    )
+    if (missing.length === 0) return
+    chartLoading.value = true
+    await Promise.allSettled(
+      missing.map(s => stockStore.fetchChartHistory(s, stockStore.chartRange))
+    )
+    chartLoading.value = false
   },
   { immediate: false }
 )
@@ -142,21 +176,33 @@ watch(
 const chartData = computed(() => {
   if (stockStore.selectedStocks.length === 0) return null
 
-  const firstHistory = stockStore.getHistoryBySymbol(stockStore.selectedStocks[0])
-  if (firstHistory.length === 0) return null
+  // Collect all unique dates from all selected stocks (unified axis)
+  const dateSet = new Set<string>()
+  const histories: Record<string, Record<string, number>> = {}
 
-  const labels = firstHistory.map(h => {
-    const date = new Date(h.date)
+  for (const symbol of stockStore.selectedStocks) {
+    const h = stockStore.getHistoryBySymbol(symbol)
+    histories[symbol] = {}
+    for (const point of h) {
+      dateSet.add(point.date)
+      histories[symbol][point.date] = point.price
+    }
+  }
+
+  const allDates = [...dateSet].sort()
+  if (allDates.length === 0) return null
+
+  const labels = allDates.map(d => {
+    const date = new Date(d)
     return `${date.getMonth() + 1}/${date.getDate()}`
   })
 
   const datasets = stockStore.selectedStocks.map((symbol, index) => {
-    const history = stockStore.getHistoryBySymbol(symbol)
-    const stock = stockStore.getStockBySymbol(symbol)
-    
+    const prices = allDates.map(d => histories[symbol][d] ?? null)
     return {
       label: symbol,
-      data: history.map(h => h.price),
+      data: prices,
+      spanGaps: stockStore.selectedStocks.length > 1, // connect gaps in compare mode
       borderColor: colors[index % colors.length],
       backgroundColor: colors[index % colors.length] + '20',
       tension: 0.4,

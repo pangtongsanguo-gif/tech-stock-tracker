@@ -23,6 +23,7 @@ export default {
     autoUpdate: '自動更新',
     refresh: '立即刷新',
     addStock: '新增股票',
+    risk: '52週風險',
     addStockTitle: '搜尋並新增股票',
     symbolLabel: '輸入公司名或股票代碼',
     searchPlaceholder: '例如 Apple、TSLA、微軟...',
@@ -41,11 +42,13 @@ export default {
     readMore: '閱讀更多',
     source: '來源',
     relatedStocks: '相關股票',
-    empty: '暫無新聞。新聞功能即將推出！'
+    empty: '暫無新聞。新聞功能即將推出！',
+    showMore: '顯示更多（+{count}）',
+    showLess: '收起'
   },
   chart: {
-    title: '30日價格走勢',
-    subtitle: '過去一個月真實股價變化',
+    title: '價格走勢',
+    subtitle: '選擇時間範圍查看歷史價格',
     selectStock: '選擇股票',
     compareMode: '對比模式',
     timeRange: '時間範圍',

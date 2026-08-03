@@ -23,6 +23,7 @@ export default {
     autoUpdate: 'Auto Update',
     refresh: 'Refresh Now',
     addStock: 'Add Stock',
+    risk: '52W Risk',
     addStockTitle: 'Search & Add Stock',
     symbolLabel: 'Search by name or symbol',
     searchPlaceholder: 'e.g. Apple, TSLA, Microsoft...',
@@ -41,11 +42,13 @@ export default {
     readMore: 'Read More',
     source: 'Source',
     relatedStocks: 'Related Stocks',
-    empty: 'No news available yet. News feed coming soon!'
+    empty: 'No news available yet. News feed coming soon!',
+    showMore: 'Show {count} more',
+    showLess: 'Show less'
   },
   chart: {
-    title: '30-Day Price Trend',
-    subtitle: 'Real stock price movement over the past month',
+    title: 'Price Trend',
+    subtitle: 'Select a time range below to view historical prices',
     selectStock: 'Select Stock',
     compareMode: 'Compare Mode',
     timeRange: 'Time Range',
